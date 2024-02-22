@@ -33,6 +33,7 @@ import (
 	xpv1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/pkg/event"
+	"github.com/crossplane/crossplane-runtime/pkg/fieldpath"
 	"github.com/crossplane/crossplane-runtime/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
@@ -484,6 +485,39 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 
 	cm.SetConditions(xpv1.ReconcileSuccess())
 
+	// which conditions we need to keep on the claim
+	typesToKeep := map[xpv1.ConditionType]struct{}{
+		xpv1.TypeReady:  {},
+		xpv1.TypeSynced: {},
+	}
+	// which conditions we are receiving from a composition function
+	fnConditions := []xpv1.Condition{}
+	for _, c := range getConditions(xr.Object) {
+		switch c.Type {
+		case xpv1.TypeReady, xpv1.TypeSynced:
+			continue
+		default:
+			// assume unknown type comes from composition function
+			fnConditions = append(fnConditions, c)
+			typesToKeep[c.Type] = struct{}{}
+		}
+	}
+
+	// force set claim conditions to remove any unknown statuses that were not given to us by the function this time
+	existingCmCs := getConditions(cm.Object)
+	prunedCmCs := []xpv1.Condition{}
+	for _, c := range existingCmCs {
+		if _, ok := typesToKeep[c.Type]; ok {
+			prunedCmCs = append(prunedCmCs, c)
+		}
+	}
+	_ = fieldpath.Pave(cm.Object).SetValue("status.conditions", prunedCmCs)
+
+	// add our incoming composition function conditions
+	if len(fnConditions) > 0 {
+		cm.SetConditions(fnConditions...)
+	}
+
 	if !resource.IsConditionTrue(xr.GetCondition(xpv1.TypeReady)) {
 		record.Event(cm, event.Normal(reasonBind, "Composite resource is not yet ready"))
 
@@ -521,4 +555,12 @@ func Waiting() xpv1.Condition {
 		Reason:             xpv1.ConditionReason("Waiting"),
 		Message:            "Claim is waiting for composite resource to become Ready",
 	}
+}
+
+func getConditions(o map[string]interface{}) []xpv1.Condition {
+	cs := xpv1.ConditionedStatus{}
+	if err := fieldpath.Pave(o).GetValueInto("status", &cs); err != nil {
+		return []xpv1.Condition{}
+	}
+	return cs.Conditions
 }
