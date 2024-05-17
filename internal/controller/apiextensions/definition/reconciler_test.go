@@ -803,6 +803,168 @@ func TestReconcile(t *testing.T) {
 				r: reconcile.Result{Requeue: false},
 			},
 		},
+		"CopiesCABundleFromCertManager": {
+			reason: "If the CRD is configured to inject a CA Bundle from CertManager, we should copy the existing CA Bundle if it exists.",
+			args: args{
+				mgr: &fake.Manager{},
+				opts: []ReconcilerOption{
+					WithClientApplicator(resource.ClientApplicator{
+						Client: &test.MockClient{
+							MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
+								d := obj.(*v1.CompositeResourceDefinition)
+								d.Annotations = map[string]string{
+									"cert-manager.io/inject-ca-from": "path-to-secret",
+								}
+								d.Spec = v1.CompositeResourceDefinitionSpec{
+									Conversion: &extv1.CustomResourceConversion{
+										Webhook: &extv1.WebhookConversion{
+											ClientConfig: &extv1.WebhookClientConfig{
+												CABundle: []byte("example-ca-bundle"),
+											},
+										},
+									},
+								}
+								return nil
+							}),
+							MockStatusUpdate: test.NewMockSubResourceUpdateFn(nil, func(_ client.Object) error {
+								return nil
+							}),
+						},
+						Applicator: resource.ApplyFn(func(_ context.Context, o client.Object, _ ...resource.ApplyOption) error {
+							want := &extv1.CustomResourceDefinition{
+								ObjectMeta: metav1.ObjectMeta{
+									Annotations: map[string]string{
+										"cert-manager.io/inject-ca-from": "path-to-secret",
+									},
+								},
+								Spec: extv1.CustomResourceDefinitionSpec{
+									Conversion: &extv1.CustomResourceConversion{
+										Webhook: &extv1.WebhookConversion{
+											ClientConfig: &extv1.WebhookClientConfig{
+												CABundle: []byte("example-ca-bundle"),
+											},
+										},
+									},
+								},
+								Status: extv1.CustomResourceDefinitionStatus{
+									Conditions: []extv1.CustomResourceDefinitionCondition{
+										{Type: extv1.Established, Status: extv1.ConditionTrue},
+									},
+								},
+							}
+
+							if diff := cmp.Diff(want, o); diff != "" {
+								t.Errorf("-want, +got:\n%s", diff)
+							}
+							return nil
+						}),
+					}),
+					WithCRDRenderer(CRDRenderFn(func(_ *v1.CompositeResourceDefinition) (*extv1.CustomResourceDefinition, error) {
+						return &extv1.CustomResourceDefinition{
+							ObjectMeta: metav1.ObjectMeta{
+								Annotations: map[string]string{
+									"cert-manager.io/inject-ca-from": "path-to-secret",
+								},
+							},
+							Spec: extv1.CustomResourceDefinitionSpec{
+								Conversion: &extv1.CustomResourceConversion{
+									Webhook: &extv1.WebhookConversion{
+										ClientConfig: &extv1.WebhookClientConfig{},
+									},
+								},
+							},
+							Status: extv1.CustomResourceDefinitionStatus{
+								Conditions: []extv1.CustomResourceDefinitionCondition{
+									{Type: extv1.Established, Status: extv1.ConditionTrue},
+								},
+							},
+						}, nil
+					})),
+					WithFinalizer(resource.FinalizerFns{AddFinalizerFn: func(_ context.Context, _ resource.Object) error {
+						return nil
+					}}),
+					WithControllerEngine(&MockEngine{
+						MockIsRunning: func(_ string) bool { return true },
+						MockErr:       func(_ string) error { return nil },
+						MockStart:     func(_ string, _ kcontroller.Options, _ ...controller.Watch) error { return nil },
+						MockStop:      func(_ string) {},
+					}),
+				},
+			},
+			want: want{
+				r: reconcile.Result{Requeue: false},
+			},
+		},
+		"HandlesMissingCABundle": {
+			reason: "If the CRD is configured to inject a CA Bundle from CertManager but no CA Bundle exists, we should not error.",
+			args: args{
+				mgr: &fake.Manager{},
+				opts: []ReconcilerOption{
+					WithClientApplicator(resource.ClientApplicator{
+						Client: &test.MockClient{
+							MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
+								d := obj.(*v1.CompositeResourceDefinition)
+								d.Annotations = map[string]string{
+									"cert-manager.io/inject-ca-from": "path-to-secret",
+								}
+								d.Spec = v1.CompositeResourceDefinitionSpec{}
+								return nil
+							}),
+							MockStatusUpdate: test.NewMockSubResourceUpdateFn(nil, func(_ client.Object) error {
+								return nil
+							}),
+						},
+						Applicator: resource.ApplyFn(func(_ context.Context, o client.Object, _ ...resource.ApplyOption) error {
+							want := &extv1.CustomResourceDefinition{
+								ObjectMeta: metav1.ObjectMeta{
+									Annotations: map[string]string{
+										"cert-manager.io/inject-ca-from": "path-to-secret",
+									},
+								},
+								Spec: extv1.CustomResourceDefinitionSpec{},
+								Status: extv1.CustomResourceDefinitionStatus{
+									Conditions: []extv1.CustomResourceDefinitionCondition{
+										{Type: extv1.Established, Status: extv1.ConditionTrue},
+									},
+								},
+							}
+
+							if diff := cmp.Diff(want, o); diff != "" {
+								t.Errorf("-want, +got:\n%s", diff)
+							}
+							return nil
+						}),
+					}),
+					WithCRDRenderer(CRDRenderFn(func(_ *v1.CompositeResourceDefinition) (*extv1.CustomResourceDefinition, error) {
+						return &extv1.CustomResourceDefinition{
+							ObjectMeta: metav1.ObjectMeta{
+								Annotations: map[string]string{
+									"cert-manager.io/inject-ca-from": "path-to-secret",
+								},
+							},
+							Spec: extv1.CustomResourceDefinitionSpec{},
+							Status: extv1.CustomResourceDefinitionStatus{
+								Conditions: []extv1.CustomResourceDefinitionCondition{
+									{Type: extv1.Established, Status: extv1.ConditionTrue},
+								},
+							},
+						}, nil
+					})),
+					WithFinalizer(resource.FinalizerFns{AddFinalizerFn: func(_ context.Context, _ resource.Object) error {
+						return nil
+					}}),
+					WithControllerEngine(&MockEngine{
+						MockIsRunning: func(_ string) bool { return true },
+						MockErr:       func(_ string) error { return nil },
+						MockStart:     func(_ string, _ kcontroller.Options, _ ...controller.Watch) error { return nil },
+						MockStop:      func(_ string) {},
+					}),
+				},
+			},
+			want: want{
+				r: reconcile.Result{Requeue: false},
+			},
+		},
 	}
 
 	// Run every test with and without the realtime compositions feature.

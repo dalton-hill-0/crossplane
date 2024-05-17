@@ -94,6 +94,11 @@ const (
 	reasonTerminateXR event.Reason = "TerminateComposite"
 )
 
+// Annotation keys.
+const (
+	certManagerInjectionKey = "cert-manager.io/inject-ca-from"
+)
+
 // A ControllerEngine can start and stop Kubernetes controllers on demand.
 type ControllerEngine interface {
 	IsRunning(name string) bool
@@ -146,6 +151,7 @@ func Setup(mgr ctrl.Manager, o apiextensionscontroller.Options) error {
 		Named(name).
 		For(&v1.CompositeResourceDefinition{}).
 		Owns(&extv1.CustomResourceDefinition{}).
+		WithEventFilter(resource.NewPredicates(OffersCompositeResource())).
 		WithOptions(o.ForControllerRuntime()).
 		Complete(ratelimiter.NewReconciler(name, errors.WithSilentRequeueOnConflict(r), o.GlobalRateLimiter))
 }
@@ -303,11 +309,36 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		"name", d.GetName(),
 	)
 
+	var existingCABundle []byte
+	if v := d.Annotations[certManagerInjectionKey]; v != "" {
+		// The existing CRD is configured to have CertManager inject a CA Bundle.
+		// Copy the existing CA Bundle if one exists.
+		if c := d.Spec.Conversion; c != nil {
+			if w := c.Webhook; w != nil {
+				if c := w.ClientConfig; c != nil {
+					existingCABundle = c.CABundle
+				}
+			}
+		}
+	}
+
 	crd, err := r.composite.Render(d)
 	if err != nil {
 		err = errors.Wrap(err, errRenderCRD)
 		r.record.Event(d, event.Warning(reasonRenderCRD, err))
 		return reconcile.Result{}, err
+	}
+
+	if v := crd.Annotations[certManagerInjectionKey]; v != "" && existingCABundle != nil {
+		// Our XRD is configured to have CertManager inject a CA Bundle into this
+		// CRD. If a CA Bundle was found on the existing CRD, copy it over.
+		if c := crd.Spec.Conversion; c != nil {
+			if w := c.Webhook; w != nil {
+				if c := w.ClientConfig; c != nil {
+					c.CABundle = existingCABundle
+				}
+			}
+		}
 	}
 
 	if meta.WasDeleted(d) {
