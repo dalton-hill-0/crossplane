@@ -27,7 +27,9 @@ import (
 	"fmt"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	appcfgextv1 "k8s.io/apiextensions-apiserver/pkg/client/applyconfiguration/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	appcfgmetav1 "k8s.io/client-go/applyconfigurations/meta/v1"
 	"k8s.io/utils/ptr"
 
 	"github.com/crossplane/crossplane-runtime/pkg/errors"
@@ -44,11 +46,13 @@ const (
 
 const (
 	errFmtGenCrd                   = "cannot generate CRD for %q %q"
+	errFmtModCrd                   = "cannot modify CRD for %q %q"
 	errParseValidation             = "cannot parse validation schema"
 	errInvalidClaimNames           = "invalid resource claim names"
 	errMissingClaimNames           = "missing names"
 	errFmtConflictingClaimName     = "%q conflicts with composite resource name"
 	errCustomResourceValidationNil = "custom resource validation cannot be nil"
+	errConvertPrinterColumns       = "cannot convert printer columns"
 )
 
 // ForCompositeResource derives the CustomResourceDefinition for a composite
@@ -95,6 +99,117 @@ func ForCompositeResource(xrd *v1.CompositeResourceDefinition) (*extv1.CustomRes
 	}
 
 	return crd, nil
+}
+
+func ModifyApplyConfigurationForCompositeResource(crd *appcfgextv1.CustomResourceDefinitionApplyConfiguration, xrd *v1.CompositeResourceDefinition) error { //nolint:gocognit
+	if crd.Name == nil {
+		crd.WithName(xrd.GetName())
+	}
+
+	if crd.Spec == nil {
+		crd.WithSpec(appcfgextv1.CustomResourceDefinitionSpec())
+	}
+	crd.Spec.WithScope(extv1.ClusterScoped)
+	crd.Spec.WithGroup(xrd.Spec.Group)
+
+	if crd.Spec.Names == nil {
+		crd.Spec.WithNames(appcfgextv1.CustomResourceDefinitionNames())
+	}
+	crd.Spec.Names.WithPlural(xrd.Spec.Names.Plural)
+	crd.Spec.Names.WithSingular(xrd.Spec.Names.Singular)
+	crd.Spec.Names.WithShortNames(xrd.Spec.Names.ShortNames...)
+	crd.Spec.Names.WithKind(xrd.Spec.Names.Kind)
+	crd.Spec.Names.WithListKind(xrd.Spec.Names.ListKind)
+	crd.Spec.Names.WithCategories(xrd.Spec.Names.Categories...)
+	crd.Spec.Names.Categories = append(crd.Spec.Names.Categories, CategoryComposite)
+
+	if xrd.Spec.Conversion != nil {
+		if crd.Spec.Conversion == nil {
+			crd.Spec.WithConversion(appcfgextv1.CustomResourceConversion())
+		}
+		xConversion := xrd.Spec.Conversion
+		cConversion := crd.Spec.Conversion
+
+		if xConversion.Strategy != "" {
+			cConversion.WithStrategy(xrd.Spec.Conversion.Strategy)
+		}
+
+		if xConversion.Webhook != nil {
+			if cConversion.Webhook == nil {
+				crd.Spec.Conversion.WithWebhook(appcfgextv1.WebhookConversion())
+			}
+			xWebhook := xrd.Spec.Conversion.Webhook
+			cWebhook := crd.Spec.Conversion.Webhook
+
+			cWebhook.ConversionReviewVersions = xWebhook.ConversionReviewVersions
+
+			if xWebhook.ClientConfig != nil {
+				if cWebhook.ClientConfig == nil {
+					cWebhook.WithClientConfig(appcfgextv1.WebhookClientConfig())
+				}
+				xClientConfig := xWebhook.ClientConfig
+				cClientConfig := cWebhook.ClientConfig
+
+				cClientConfig.URL = xClientConfig.URL
+				cClientConfig.CABundle = xClientConfig.CABundle
+
+				if xClientConfig.Service != nil {
+					if cClientConfig.Service == nil {
+						cClientConfig.WithService(appcfgextv1.ServiceReference())
+					}
+					xService := xClientConfig.Service
+					cService := cClientConfig.Service
+
+					if xService.Name != "" {
+						cService.WithName(xService.Name)
+					}
+					if xService.Namespace != "" {
+						cService.WithNamespace(xService.Namespace)
+					}
+					cService.Path = xService.Path
+					cService.Port = xService.Port
+				}
+			}
+		}
+	}
+
+	setCrdMetadataApplyConfiguration(crd, xrd)
+
+	ownerKind, ownerVersion := v1.CompositeResourceDefinitionGroupVersionKind.ToAPIVersionAndKind()
+	ownerRef := appcfgmetav1.OwnerReference().
+		WithName(xrd.Name).
+		WithUID(xrd.GetUID()).
+		WithAPIVersion(ownerVersion).
+		WithKind(ownerKind).
+		WithBlockOwnerDeletion(true).
+		WithController(true)
+	crd.WithOwnerReferences(ownerRef)
+
+	for i, xrdv := range xrd.Spec.Versions {
+		// TODO(dalton): note requirement on index sharing, doubt this would be
+		// broken by anyone, but in theory someone could mess this up	since we are
+		// loading data on CRD version index and patching that into what we create
+		// from the XRD
+		if i >= len(crd.Spec.Versions) {
+			crd.Spec.Versions = append(crd.Spec.Versions, appcfgextv1.CustomResourceDefinitionVersionApplyConfiguration{})
+		}
+		crdv := &crd.Spec.Versions[i]
+		if err := modifyCrdVersionApplyConfig(crdv, xrdv); err != nil {
+			return errors.Wrapf(err, errFmtModCrd, "Composite Resource", xrd.Name)
+		}
+		crdv.AdditionalPrinterColumns = append(crdv.AdditionalPrinterColumns, CompositeResourcePrinterColumnsAppCfg()...)
+		props := CompositeResourceSpecPropsAppCfg()
+		if xrd.Spec.DefaultCompositionUpdatePolicy != nil {
+			cup := props["compositionUpdatePolicy"]
+			cup.Default = &extv1.JSON{Raw: []byte(fmt.Sprintf("\"%s\"", *xrd.Spec.DefaultCompositionUpdatePolicy))}
+			props["compositionUpdatePolicy"] = cup
+		}
+		for k, v := range props {
+			crdv.Schema.OpenAPIV3Schema.Properties["spec"].Properties[k] = v
+		}
+	}
+
+	return nil
 }
 
 // ForCompositeResourceClaim derives the CustomResourceDefinition for a
@@ -146,6 +261,106 @@ func ForCompositeResourceClaim(xrd *v1.CompositeResourceDefinition) (*extv1.Cust
 	}
 
 	return crd, nil
+}
+
+func modifyCrdVersionApplyConfig(crdv *appcfgextv1.CustomResourceDefinitionVersionApplyConfiguration, xrdv v1.CompositeResourceDefinitionVersion) error {
+	crdv.WithName(xrdv.Name)
+	crdv.WithServed(xrdv.Served)
+	crdv.WithStorage(xrdv.Served)
+	crdv.WithDeprecated(ptr.Deref(xrdv.Deprecated, false))
+	crdv.DeprecationWarning = xrdv.DeprecationWarning
+
+	for _, c := range xrdv.AdditionalPrinterColumns {
+		bs, err := c.Marshal()
+		if err != nil {
+			return errors.Wrap(err, errConvertPrinterColumns)
+		}
+
+		appCfg := appcfgextv1.CustomResourceColumnDefinition()
+		if err := json.Unmarshal(bs, appCfg); err != nil {
+			return errors.Wrap(err, errConvertPrinterColumns)
+		}
+		crdv.AdditionalPrinterColumns = append(crdv.AdditionalPrinterColumns, *appCfg)
+	}
+
+	// TODO: additionalprintercolumns
+
+	if crdv.Schema == nil {
+		crdv.WithSchema(appcfgextv1.CustomResourceValidation())
+	}
+	if crdv.Schema.OpenAPIV3Schema == nil {
+		crdv.Schema.WithOpenAPIV3Schema(appcfgextv1.JSONSchemaProps())
+	}
+	BasePropsApplyConfig(crdv.Schema.OpenAPIV3Schema)
+
+	if crdv.Subresources == nil {
+		crdv.WithSubresources(appcfgextv1.CustomResourceSubresources())
+	}
+	crdv.Subresources.WithStatus(extv1.CustomResourceSubresourceStatus{})
+
+	s, err := parseSchemaAppCfg(xrdv.Schema)
+	if err != nil {
+		return errors.Wrapf(err, errParseValidation)
+	}
+
+	if s == nil {
+		return errors.New(errCustomResourceValidationNil)
+	}
+
+	crdv.Schema.OpenAPIV3Schema.Description = s.Description
+
+	maxLength := int64(63)
+	if old := s.Properties["metadata"].Properties["name"].MaxLength; old != nil && *old < maxLength {
+		maxLength = *old
+	}
+
+	xName := crdv.Schema.OpenAPIV3Schema.Properties["name"]
+	xName.WithMaxLength(maxLength)
+	xName.WithType("string")
+	xMeta := crdv.Schema.OpenAPIV3Schema.Properties["metadata"]
+	if xMeta.Properties == nil {
+		xMeta.Properties = make(map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration)
+	}
+	xMeta.Properties["name"] = xName
+	crdv.Schema.OpenAPIV3Schema.Properties["metadata"] = xMeta
+
+	xSpec := s.Properties["spec"]
+	cSpec := crdv.Schema.OpenAPIV3Schema.Properties["spec"]
+	// TODO(dalton): there is some logic which prevents this from having
+	// duplicates?
+	cSpec.Required = append(cSpec.Required, xSpec.Required...)
+	if cSpec.XValidations == nil {
+		cSpec.XValidations = &extv1.ValidationRules{}
+	}
+	if xSpec.XValidations == nil {
+		xSpec.XValidations = &extv1.ValidationRules{}
+	}
+	cSpec.WithXValidations(append(*cSpec.XValidations, *xSpec.XValidations...))
+	cSpec.OneOf = append(cSpec.OneOf, xSpec.OneOf...)
+	cSpec.Description = xSpec.Description
+	if cSpec.Properties == nil {
+		cSpec.Properties = make(map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration)
+	}
+	for k, v := range xSpec.Properties {
+		cSpec.Properties[k] = v
+	}
+	crdv.Schema.OpenAPIV3Schema.Properties["spec"] = cSpec
+
+	xStatus := s.Properties["status"]
+	cStatus := crdv.Schema.OpenAPIV3Schema.Properties["status"]
+	cStatus.Required = xStatus.Required
+	cStatus.XValidations = xStatus.XValidations
+	cStatus.Description = xStatus.Description
+	cStatus.OneOf = xStatus.OneOf
+	for k, v := range xStatus.Properties {
+		cStatus.Properties[k] = v
+	}
+	for k, v := range CompositeResourceStatusPropsAppCfg() {
+		cStatus.Properties[k] = v
+	}
+	crdv.Schema.OpenAPIV3Schema.Properties["status"] = cStatus
+
+	return nil
 }
 
 func genCrdVersion(vr v1.CompositeResourceDefinitionVersion, maxNameLength int64) (*extv1.CustomResourceDefinitionVersion, error) {
@@ -248,6 +463,19 @@ func parseSchema(v *v1.CompositeResourceValidation) (*extv1.JSONSchemaProps, err
 	return s, nil
 }
 
+// TODO(dalton): double-check this works as expected.
+func parseSchemaAppCfg(v *v1.CompositeResourceValidation) (*appcfgextv1.JSONSchemaPropsApplyConfiguration, error) {
+	if v == nil {
+		return nil, nil
+	}
+
+	s := appcfgextv1.JSONSchemaProps()
+	if err := json.Unmarshal(v.OpenAPIV3Schema.Raw, s); err != nil {
+		return nil, errors.Wrap(err, errParseValidation)
+	}
+	return s, nil
+}
+
 // setCrdMetadata sets the labels and annotations on the CRD.
 func setCrdMetadata(crd *extv1.CustomResourceDefinition, xrd *v1.CompositeResourceDefinition) *extv1.CustomResourceDefinition {
 	crd.SetLabels(xrd.GetLabels())
@@ -267,6 +495,37 @@ func setCrdMetadata(crd *extv1.CustomResourceDefinition, xrd *v1.CompositeResour
 		}
 	}
 	return crd
+}
+
+func setCrdMetadataApplyConfiguration(crd *appcfgextv1.CustomResourceDefinitionApplyConfiguration, xrd *v1.CompositeResourceDefinition) {
+	// Set labels.
+	labelsFromXRD := make(map[string]string)
+	for k, v := range xrd.GetLabels() {
+		labelsFromXRD[k] = v
+	}
+	if xrd.Spec.Metadata != nil {
+		for k, v := range xrd.Spec.Metadata.Labels {
+			labelsFromXRD[k] = v
+		}
+	}
+	if len(labelsFromXRD) > 0 {
+		if crd.Labels == nil {
+			crd.Labels = make(map[string]string)
+		}
+		for k, v := range labelsFromXRD {
+			crd.Labels[k] = v
+		}
+	}
+
+	// Set annotations.
+	if xrd.Spec.Metadata != nil && len(xrd.Spec.Metadata.Annotations) > 0 {
+		if crd.Annotations == nil {
+			crd.Annotations = make(map[string]string)
+		}
+		for k, v := range xrd.Spec.Metadata.Annotations {
+			crd.Annotations[k] = v
+		}
+	}
 }
 
 // IsEstablished is a helper function to check whether api-server is ready

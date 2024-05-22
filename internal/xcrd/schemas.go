@@ -18,6 +18,7 @@ package xcrd
 
 import (
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	appcfgextv1 "k8s.io/apiextensions-apiserver/pkg/client/applyconfiguration/apiextensions/v1"
 	"k8s.io/utils/ptr"
 )
 
@@ -62,6 +63,199 @@ func BaseProps() *extv1.JSONSchemaProps {
 			"status": {
 				Type:       "object",
 				Properties: map[string]extv1.JSONSchemaProps{},
+			},
+		},
+	}
+}
+
+func BasePropsApplyConfig(p *appcfgextv1.JSONSchemaPropsApplyConfiguration) {
+	p.WithType("object")
+
+	// TODO(dalton): should this be overridden instead?
+	specRequired := false
+	for _, r := range p.Required {
+		if r == "spec" {
+			specRequired = true
+			break
+		}
+	}
+	if !specRequired {
+		p.Required = append(p.Required, "spec")
+	}
+
+	if p.Properties == nil {
+		p.Properties = make(map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration)
+	}
+
+	updateOrCreateProperty("apiVersion", p.Properties, func(jpac *appcfgextv1.JSONSchemaPropsApplyConfiguration) {
+		jpac.WithType("string")
+	})
+
+	updateOrCreateProperty("kind", p.Properties, func(jpac *appcfgextv1.JSONSchemaPropsApplyConfiguration) {
+		jpac.WithType("string")
+	})
+
+	updateOrCreateProperty("metadata", p.Properties, func(jpac *appcfgextv1.JSONSchemaPropsApplyConfiguration) {
+		jpac.WithType("object")
+	})
+
+	updateOrCreateProperty("spec", p.Properties, func(jpac *appcfgextv1.JSONSchemaPropsApplyConfiguration) {
+		jpac.WithType("object")
+		jpac.Properties = make(map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration)
+	})
+
+	updateOrCreateProperty("status", p.Properties, func(jpac *appcfgextv1.JSONSchemaPropsApplyConfiguration) {
+		jpac.WithType("object")
+		jpac.Properties = make(map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration)
+	})
+}
+
+func updateOrCreateProperty(key string, m map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration, fn func(*appcfgextv1.JSONSchemaPropsApplyConfiguration)) {
+	v, ok := m[key]
+	if !ok {
+		v = *appcfgextv1.JSONSchemaProps()
+	}
+	fn(&v)
+	m[key] = v
+}
+
+func CompositeResourceSpecPropsAppCfg() map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration {
+	return map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+		"compositionRef": {
+			Type:     ptr.To("object"),
+			Required: []string{"name"},
+			Properties: map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+				"name": {
+					Type: ptr.To("string"),
+				},
+			},
+		},
+		"compositionSelector": {
+			Type:     ptr.To("object"),
+			Required: []string{"matchLabels"},
+			Properties: map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+				"matchLabels": {
+					Type: ptr.To("object"),
+					AdditionalProperties: &extv1.JSONSchemaPropsOrBool{
+						Allows: true,
+						Schema: &extv1.JSONSchemaProps{Type: "string"},
+					},
+				},
+			},
+		},
+		"compositionRevisionRef": {
+			Type:     ptr.To("object"),
+			Required: []string{"name"},
+			Properties: map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+				"name": {
+					Type: ptr.To("string"),
+				},
+			},
+		},
+		"compositionRevisionSelector": {
+			Type:     ptr.To("object"),
+			Required: []string{"matchLabels"},
+			Properties: map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+				"matchLabels": {
+					Type: ptr.To("object"),
+					AdditionalProperties: &extv1.JSONSchemaPropsOrBool{
+						Allows: true,
+						Schema: &extv1.JSONSchemaProps{Type: "string"},
+					},
+				},
+			},
+		},
+		"compositionUpdatePolicy": {
+			Type: ptr.To("string"),
+			Enum: []extv1.JSON{
+				{Raw: []byte(`"Automatic"`)},
+				{Raw: []byte(`"Manual"`)},
+			},
+		},
+		"claimRef": {
+			Type:     ptr.To("object"),
+			Required: []string{"apiVersion", "kind", "namespace", "name"},
+			Properties: map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+				"apiVersion": {Type: ptr.To("string")},
+				"kind":       {Type: ptr.To("string")},
+				"namespace":  {Type: ptr.To("string")},
+				"name":       {Type: ptr.To("string")},
+			},
+		},
+		"environmentConfigRefs": {
+			Type: ptr.To("array"),
+			Items: &extv1.JSONSchemaPropsOrArray{
+				Schema: &extv1.JSONSchemaProps{
+					Type: "object",
+					Properties: map[string]extv1.JSONSchemaProps{
+						"apiVersion": {Type: "string"},
+						"name":       {Type: "string"},
+						"kind":       {Type: "string"},
+					},
+					Required: []string{"apiVersion", "kind"},
+				},
+			},
+		},
+		"resourceRefs": {
+			Type: ptr.To("array"),
+			Items: &extv1.JSONSchemaPropsOrArray{
+				Schema: &extv1.JSONSchemaProps{
+					Type: "object",
+					Properties: map[string]extv1.JSONSchemaProps{
+						"apiVersion": {Type: "string"},
+						"name":       {Type: "string"},
+						"kind":       {Type: "string"},
+					},
+					Required: []string{"apiVersion", "kind"},
+				},
+			},
+			// Controllers should replace the entire resourceRefs array.
+			XListType: ptr.To("atomic"),
+		},
+		"publishConnectionDetailsTo": {
+			Type:     ptr.To("object"),
+			Required: []string{"name"},
+			Properties: map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+				"name": {Type: ptr.To("string")},
+				"configRef": {
+					Type:    ptr.To("object"),
+					Default: &extv1.JSON{Raw: []byte(`{"name": "default"}`)},
+					Properties: map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+						"name": {
+							Type: ptr.To("string"),
+						},
+					},
+				},
+				"metadata": {
+					Type: ptr.To("object"),
+					Properties: map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+						"labels": {
+							Type: ptr.To("object"),
+							AdditionalProperties: &extv1.JSONSchemaPropsOrBool{
+								Allows: true,
+								Schema: &extv1.JSONSchemaProps{Type: "string"},
+							},
+						},
+						"annotations": {
+							Type: ptr.To("object"),
+							AdditionalProperties: &extv1.JSONSchemaPropsOrBool{
+								Allows: true,
+								Schema: &extv1.JSONSchemaProps{Type: "string"},
+							},
+						},
+						"type": {
+							Type: ptr.To("string"),
+						},
+					},
+				},
+			},
+		},
+		"writeConnectionSecretToRef": {
+			Type:     ptr.To("object"),
+			Required: []string{"name", "namespace"},
+			Properties: map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+				"name":      {Type: ptr.To("string")},
+				"namespace": {Type: ptr.To("string")},
 			},
 		},
 	}
@@ -324,6 +518,36 @@ func CompositeResourceClaimSpecProps() map[string]extv1.JSONSchemaProps {
 	}
 }
 
+func CompositeResourceStatusPropsAppCfg() map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration {
+	return map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+		"conditions": *appcfgextv1.JSONSchemaProps().
+			WithType("array").
+			WithDescription("Conditions of the resource.").
+			WithXListMapKeys("type").
+			WithXListType("map").
+			WithItems(extv1.JSONSchemaPropsOrArray{
+				Schema: &extv1.JSONSchemaProps{
+					Type:     "object",
+					Required: []string{"lastTransitionTime", "reason", "status", "type"},
+					Properties: map[string]extv1.JSONSchemaProps{
+						"lastTransitionTime": {Type: "string", Format: "date-time"},
+						"message":            {Type: "string"},
+						"reason":             {Type: "string"},
+						"status":             {Type: "string"},
+						"type":               {Type: "string"},
+					},
+				},
+			}),
+		"connectionDetails": *appcfgextv1.JSONSchemaProps().
+			WithType("object").
+			WithProperties(map[string]appcfgextv1.JSONSchemaPropsApplyConfiguration{
+				"lastPublishedTime": *appcfgextv1.JSONSchemaProps().
+					WithType("string").
+					WithFormat("date-time"),
+			}),
+	}
+}
+
 // CompositeResourceStatusProps is a partial OpenAPIV3Schema for the status
 // fields that Crossplane expects to be present for all defined or published
 // infrastructure resources.
@@ -383,6 +607,27 @@ func CompositeResourcePrinterColumns() []extv1.CustomResourceColumnDefinition {
 			Type:     "date",
 			JSONPath: ".metadata.creationTimestamp",
 		},
+	}
+}
+
+func CompositeResourcePrinterColumnsAppCfg() []appcfgextv1.CustomResourceColumnDefinitionApplyConfiguration {
+	return []appcfgextv1.CustomResourceColumnDefinitionApplyConfiguration{
+		*appcfgextv1.CustomResourceColumnDefinition().
+			WithName("SYNCED").
+			WithType("string").
+			WithJSONPath(".status.conditions[?(@.type=='Synced')].status"),
+		*appcfgextv1.CustomResourceColumnDefinition().
+			WithName("READY").
+			WithType("string").
+			WithJSONPath(".status.conditions[?(@.type=='Ready')].status"),
+		*appcfgextv1.CustomResourceColumnDefinition().
+			WithName("CONNECTION-SECRET").
+			WithType("string").
+			WithJSONPath(".spec.writeConnectionSecretToRef.name"),
+		*appcfgextv1.CustomResourceColumnDefinition().
+			WithName("AGE").
+			WithType("date").
+			WithJSONPath(".metadata.creationTimestamp"),
 	}
 }
 

@@ -24,12 +24,13 @@ import (
 	"time"
 
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	appcfgextv1 "k8s.io/apiextensions-apiserver/pkg/client/applyconfiguration/apiextensions/v1"
+	extclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	kmeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kunstructured "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -125,9 +126,15 @@ func (fn CRDRenderFn) Render(d *v1.CompositeResourceDefinition) (*extv1.CustomRe
 func Setup(mgr ctrl.Manager, o apiextensionscontroller.Options) error {
 	name := "defined/" + strings.ToLower(v1.CompositeResourceDefinitionGroupKind)
 
+	cs, err := extclient.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		return errors.Wrap(err, "failed to initialize clientset")
+	}
+
 	r := NewReconciler(mgr,
 		WithLogger(o.Logger.WithValues("controller", name)),
 		WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
+		WithClientset(cs),
 		WithOptions(o))
 
 	if o.Features.Enabled(features.EnableAlphaRealtimeCompositions) {
@@ -209,6 +216,14 @@ func WithClientApplicator(ca resource.ClientApplicator) ReconcilerOption {
 	}
 }
 
+// WithClientset specifies how the Reconciler should interact with the
+// Kubernetes API.
+func WithClientset(cs *extclient.Clientset) ReconcilerOption {
+	return func(r *Reconciler) {
+		r.clientset = cs
+	}
+}
+
 type definition struct {
 	CRDRenderer
 	ControllerEngine
@@ -226,7 +241,7 @@ func NewReconciler(mgr manager.Manager, opts ...ReconcilerOption) *Reconciler {
 
 		client: resource.ClientApplicator{
 			Client:     kube,
-			Applicator: resource.NewAPIUpdatingApplicator(kube),
+			Applicator: resource.NewAPIPatchingApplicator(kube),
 		},
 
 		composite: definition{
@@ -267,8 +282,9 @@ func NewReconciler(mgr manager.Manager, opts ...ReconcilerOption) *Reconciler {
 
 // A Reconciler reconciles CompositeResourceDefinitions.
 type Reconciler struct {
-	client resource.ClientApplicator
-	mgr    manager.Manager
+	client    resource.ClientApplicator
+	mgr       manager.Manager
+	clientset *extclient.Clientset
 
 	composite definition
 
@@ -278,6 +294,8 @@ type Reconciler struct {
 	xrInformers composedResourceInformers
 
 	options apiextensionscontroller.Options
+
+	name string
 }
 
 // Reconcile a CompositeResourceDefinition by defining a new kind of composite
@@ -285,6 +303,7 @@ type Reconciler struct {
 func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) { //nolint:gocognit // Reconcilers are complex. Be wary of adding more.
 	log := r.log.WithValues("request", req)
 	log.Debug("Reconciling")
+	crdClient := r.clientset.ApiextensionsV1().CustomResourceDefinitions()
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -304,8 +323,19 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		"name", d.GetName(),
 	)
 
-	crd, err := r.composite.Render(d)
-	if err != nil {
+	crd, err := crdClient.Get(ctx, req.Name, metav1.GetOptions{})
+	if resource.IgnoreNotFound(err) != nil {
+		err = errors.Wrap(err, errGetCRD)
+		r.record.Event(d, event.Warning(reasonRenderCRD, err))
+		return reconcile.Result{}, err
+	}
+
+	// TODO(dalton): It doesn't look like CRDs have an existing extract API. We
+	// may need to add this? Though creating this empty config and adding the
+	// config as we were before seems to work fine for now.
+	crdAppCfg := appcfgextv1.CustomResourceDefinition(d.GetName())
+
+	if err := xcrd.ModifyApplyConfigurationForCompositeResource(crdAppCfg, d); err != nil {
 		err = errors.Wrap(err, errRenderCRD)
 		r.record.Event(d, event.Warning(reasonRenderCRD, err))
 		return reconcile.Result{}, err
@@ -319,13 +349,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 				return reconcile.Result{Requeue: true}, nil
 			}
 			err = errors.Wrap(err, errUpdateStatus)
-			return reconcile.Result{}, err
-		}
-
-		nn := types.NamespacedName{Name: crd.GetName()}
-		if err := r.client.Get(ctx, nn, crd); resource.IgnoreNotFound(err) != nil {
-			err = errors.Wrap(err, errGetCRD)
-			r.record.Event(d, event.Warning(reasonTerminateXR, err))
 			return reconcile.Result{}, err
 		}
 
@@ -396,7 +419,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		r.stopCompositeController(d)
 		log.Debug("Stopped composite resource controller")
 
-		if err := r.client.Delete(ctx, crd); resource.IgnoreNotFound(err) != nil {
+		if err := crdClient.Delete(ctx, crd.Name, metav1.DeleteOptions{}); resource.IgnoreNotFound(err) != nil {
 			log.Debug(errDeleteCRD, "error", err)
 			err = errors.Wrap(err, errDeleteCRD)
 			r.record.Event(d, event.Warning(reasonTerminateXR, err))
@@ -421,8 +444,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, err
 	}
 
-	origRV := ""
-	if err := r.client.Apply(ctx, crd, resource.MustBeControllableBy(d.GetUID()), resource.StoreCurrentRV(&origRV)); err != nil {
+	opts := metav1.ApplyOptions{
+		Force: true,
+		// TODO(dalton): Get input on what this value should be.
+		FieldManager: "defined/" + strings.ToLower(v1.CompositeResourceDefinitionGroupKind),
+	}
+	appliedCrd, err := crdClient.Apply(ctx, crdAppCfg, opts)
+	if err != nil {
 		log.Debug(errApplyCRD, "error", err)
 		if kerrors.IsConflict(err) {
 			return reconcile.Result{Requeue: true}, nil
@@ -431,11 +459,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		r.record.Event(d, event.Warning(reasonEstablishXR, err))
 		return reconcile.Result{}, err
 	}
-	if crd.GetResourceVersion() != origRV {
-		r.record.Event(d, event.Normal(reasonEstablishXR, fmt.Sprintf("Applied composite resource CustomResourceDefinition: %s", crd.GetName())))
-	}
 
-	if !xcrd.IsEstablished(crd.Status) {
+	if !xcrd.IsEstablished(appliedCrd.Status) {
 		log.Debug(waitCRDEstablish)
 		r.record.Event(d, event.Normal(reasonEstablishXR, waitCRDEstablish))
 		return reconcile.Result{Requeue: true}, nil
