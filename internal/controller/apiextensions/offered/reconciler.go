@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	kcontroller "sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -58,6 +59,10 @@ import (
 const (
 	timeout   = 1 * time.Minute
 	finalizer = "offered.apiextensions.crossplane.io"
+
+	// FieldOwner owns the fields this controller mutates on
+	// CustomResourceDefinitions (CRDs).
+	FieldOwner = "apiextensions.crossplane.io/offered"
 )
 
 // Error strings.
@@ -195,10 +200,7 @@ func NewReconciler(mgr manager.Manager, opts ...ReconcilerOption) *Reconciler {
 	r := &Reconciler{
 		mgr: mgr,
 
-		client: resource.ClientApplicator{
-			Client:     kube,
-			Applicator: resource.NewAPIUpdatingApplicator(kube),
-		},
+		client: kube,
 
 		claim: definition{
 			CRDRenderer:      CRDRenderFn(xcrd.ForCompositeResourceClaim),
@@ -229,7 +231,7 @@ type definition struct {
 // A Reconciler reconciles CompositeResourceDefinitions.
 type Reconciler struct {
 	mgr    manager.Manager
-	client resource.ClientApplicator
+	client client.Client
 
 	claim definition
 
@@ -376,17 +378,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, err
 	}
 
-	origRV := ""
-	if err := r.client.Apply(ctx, crd, resource.MustBeControllableBy(d.GetUID()), resource.StoreCurrentRV(&origRV)); err != nil {
+	if err := r.client.Patch(ctx, crd, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwner)); err != nil {
 		if kerrors.IsConflict(err) {
 			return reconcile.Result{Requeue: true}, nil
 		}
 		err = errors.Wrap(err, errApplyCRD)
 		r.record.Event(d, event.Warning(reasonOfferXRC, err))
 		return reconcile.Result{}, err
-	}
-	if crd.GetResourceVersion() != origRV {
-		r.record.Event(d, event.Normal(reasonOfferXRC, fmt.Sprintf("Applied composite resource claim CustomResourceDefinition: %s", crd.GetName())))
 	}
 
 	if !xcrd.IsEstablished(crd.Status) {

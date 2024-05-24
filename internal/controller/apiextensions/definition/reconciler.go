@@ -66,6 +66,10 @@ const (
 	timeout   = 2 * time.Minute
 	finalizer = "defined.apiextensions.crossplane.io"
 
+	// FieldOwner owns the fields this controller mutates on
+	// CustomResourceDefinitions (CRDs).
+	FieldOwner = "apiextensions.crossplane.io/definition"
+
 	errGetXRD                         = "cannot get CompositeResourceDefinition"
 	errRenderCRD                      = "cannot render composite resource CustomResourceDefinition"
 	errGetCRD                         = "cannot get composite resource CustomResourceDefinition"
@@ -224,10 +228,7 @@ func NewReconciler(mgr manager.Manager, opts ...ReconcilerOption) *Reconciler {
 	r := &Reconciler{
 		mgr: mgr,
 
-		client: resource.ClientApplicator{
-			Client:     kube,
-			Applicator: resource.NewAPIUpdatingApplicator(kube),
-		},
+		client: kube,
 
 		composite: definition{
 			CRDRenderer:      CRDRenderFn(xcrd.ForCompositeResource),
@@ -267,7 +268,7 @@ func NewReconciler(mgr manager.Manager, opts ...ReconcilerOption) *Reconciler {
 
 // A Reconciler reconciles CompositeResourceDefinitions.
 type Reconciler struct {
-	client resource.ClientApplicator
+	client client.Client
 	mgr    manager.Manager
 
 	composite definition
@@ -421,8 +422,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, err
 	}
 
-	origRV := ""
-	if err := r.client.Apply(ctx, crd, resource.MustBeControllableBy(d.GetUID()), resource.StoreCurrentRV(&origRV)); err != nil {
+	if err := r.client.Patch(ctx, crd, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwner)); err != nil {
 		log.Debug(errApplyCRD, "error", err)
 		if kerrors.IsConflict(err) {
 			return reconcile.Result{Requeue: true}, nil
@@ -430,9 +430,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		err = errors.Wrap(err, errApplyCRD)
 		r.record.Event(d, event.Warning(reasonEstablishXR, err))
 		return reconcile.Result{}, err
-	}
-	if crd.GetResourceVersion() != origRV {
-		r.record.Event(d, event.Normal(reasonEstablishXR, fmt.Sprintf("Applied composite resource CustomResourceDefinition: %s", crd.GetName())))
 	}
 
 	if !xcrd.IsEstablished(crd.Status) {
