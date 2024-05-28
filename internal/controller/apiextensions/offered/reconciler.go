@@ -378,6 +378,10 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		return reconcile.Result{}, err
 	}
 
+	// We are aware that using controller-runtime server-side apply will result in
+	// some zero-value fields, however, this should not affect the way CRDs are
+	// implemented in this controller. For a discussion on the runtime issue, see
+	// https://github.com/kubernetes-sigs/controller-runtime/issues/347.
 	if err := r.client.Patch(ctx, crd, client.Apply, client.ForceOwnership, client.FieldOwner(FieldOwner)); err != nil {
 		if kerrors.IsConflict(err) {
 			return reconcile.Result{Requeue: true}, nil

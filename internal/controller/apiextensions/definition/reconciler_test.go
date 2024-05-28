@@ -490,11 +490,9 @@ func TestReconcile(t *testing.T) {
 				opts: []ReconcilerOption{
 					WithClientApplicator(resource.ClientApplicator{
 						Client: &test.MockClient{
-							MockGet: test.NewMockGetFn(nil),
+							MockGet:   test.NewMockGetFn(nil),
+							MockPatch: test.NewMockPatchFn(errBoom),
 						},
-						Applicator: resource.ApplyFn(func(_ context.Context, _ client.Object, _ ...resource.ApplyOption) error {
-							return errBoom
-						}),
 					}),
 					WithCRDRenderer(CRDRenderFn(func(_ *v1.CompositeResourceDefinition) (*extv1.CustomResourceDefinition, error) {
 						return &extv1.CustomResourceDefinition{}, nil
@@ -515,11 +513,9 @@ func TestReconcile(t *testing.T) {
 				opts: []ReconcilerOption{
 					WithClientApplicator(resource.ClientApplicator{
 						Client: &test.MockClient{
-							MockGet: test.NewMockGetFn(nil),
+							MockGet:   test.NewMockGetFn(nil),
+							MockPatch: test.NewMockPatchFn(nil),
 						},
-						Applicator: resource.ApplyFn(func(_ context.Context, _ client.Object, _ ...resource.ApplyOption) error {
-							return nil
-						}),
 					}),
 					WithCRDRenderer(CRDRenderFn(func(_ *v1.CompositeResourceDefinition) (*extv1.CustomResourceDefinition, error) {
 						return &extv1.CustomResourceDefinition{}, nil
@@ -553,11 +549,9 @@ func TestReconcile(t *testing.T) {
 				opts: []ReconcilerOption{
 					WithClientApplicator(resource.ClientApplicator{
 						Client: &test.MockClient{
-							MockGet: test.NewMockGetFn(nil),
+							MockGet:   test.NewMockGetFn(nil),
+							MockPatch: test.NewMockPatchFn(nil),
 						},
-						Applicator: resource.ApplyFn(func(_ context.Context, _ client.Object, _ ...resource.ApplyOption) error {
-							return nil
-						}),
 					}),
 					WithCRDRenderer(CRDRenderFn(func(_ *v1.CompositeResourceDefinition) (*extv1.CustomResourceDefinition, error) {
 						return &extv1.CustomResourceDefinition{
@@ -615,10 +609,8 @@ func TestReconcile(t *testing.T) {
 								}
 								return nil
 							}),
+							MockPatch: test.NewMockPatchFn(nil),
 						},
-						Applicator: resource.ApplyFn(func(_ context.Context, _ client.Object, _ ...resource.ApplyOption) error {
-							return nil
-						}),
 					}),
 					WithCRDRenderer(CRDRenderFn(func(_ *v1.CompositeResourceDefinition) (*extv1.CustomResourceDefinition, error) {
 						return &extv1.CustomResourceDefinition{
@@ -700,10 +692,8 @@ func TestReconcile(t *testing.T) {
 								}
 								return nil
 							}),
+							MockPatch: test.NewMockPatchFn(nil),
 						},
-						Applicator: resource.ApplyFn(func(_ context.Context, _ client.Object, _ ...resource.ApplyOption) error {
-							return nil
-						}),
 					}),
 					WithCRDRenderer(CRDRenderFn(func(_ *v1.CompositeResourceDefinition) (*extv1.CustomResourceDefinition, error) {
 						return &extv1.CustomResourceDefinition{
@@ -772,10 +762,8 @@ func TestReconcile(t *testing.T) {
 								}
 								return nil
 							}),
+							MockPatch: test.NewMockPatchFn(nil),
 						},
-						Applicator: resource.ApplyFn(func(_ context.Context, _ client.Object, _ ...resource.ApplyOption) error {
-							return nil
-						}),
 					}),
 					WithCRDRenderer(CRDRenderFn(func(_ *v1.CompositeResourceDefinition) (*extv1.CustomResourceDefinition, error) {
 						return &extv1.CustomResourceDefinition{
