@@ -289,7 +289,7 @@ enum Target {
 }
 
 // A Status Condition to be applied to the Composite Resource and sometimes the
-// Claim. For detailed information on proper usage, please see
+// Claim. For detailed information on proper usage of Conditions, please see
 // https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties.
 message Condition {
   // Type of condition in CamelCase or in foo.example.com/CamelCase.

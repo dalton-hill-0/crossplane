@@ -356,6 +356,14 @@ func CompositeResourceStatusProps() map[string]extv1.JSONSchemaProps {
 				"lastPublishedTime": {Type: "string", Format: "date-time"},
 			},
 		},
+		"claimConditions": {
+			Type: "array",
+			Items: &extv1.JSONSchemaPropsOrArray{
+				Schema: &extv1.JSONSchemaProps{
+					Type: "string",
+				},
+			},
+		},
 	}
 }
 
