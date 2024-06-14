@@ -641,22 +641,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			return reconcile.Result{Requeue: true}, nil
 		}
 
-		conditionsSeen := make(map[xpv1.ConditionType]struct{})
-		for _, c := range res.Conditions {
-			if xpv1.IsSystemConditionType(c.Condition.Type) {
-				// Do not let users update system conditions.
-				continue
-			}
-			xr.SetConditions(c.Condition)
-			xr.SetClaimConditions(c.Condition.Type)
-			conditionsSeen[c.Condition.Type] = struct{}{}
-		}
-
+		meta := handleCommonCompositionResult(r, res, ctx, xr, log)
 		for _, c := range xr.GetConditions() {
 			if xpv1.IsSystemConditionType(c.Type) {
 				continue
 			}
-			if _, ok := conditionsSeen[c.Type]; !ok {
+			if _, ok := meta.conditionTypesSeen[c.Type]; !ok {
 				c.Status = corev1.ConditionUnknown
 				c.Reason = reasonPriorFailure
 				xr.SetConditions(c)
@@ -709,39 +699,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		r.record.Event(xr, event.Normal(reasonPublish, "Successfully published connection details"))
 	}
 
-	cm, err := getClaimFromXR(r, ctx, xr)
-	if err != nil {
-		log.Debug(errGetClaim, "error", err)
-	}
+	meta := handleCommonCompositionResult(r, res, ctx, xr, log)
 
-	warnings := 0
-	for _, e := range res.Events {
-		if e.Event.Type == event.TypeWarning {
-			warnings++
-		}
-		log.Debug(e.Event.Message)
-
-		r.record.Event(xr, e.Event)
-
-		if e.Target == CompositionTargetCompositeAndClaim && cm != nil {
-			r.record.Event(cm, e.Event)
-		}
-	}
-
-	for _, c := range res.Conditions {
-		if xpv1.IsSystemConditionType(c.Condition.Type) {
-			// Do not let users update system conditions.
-			continue
-		}
-
-		xr.SetConditions(c.Condition)
-
-		if c.Target == CompositionTargetCompositeAndClaim {
-			xr.SetClaimConditions(c.Condition.Type)
-		}
-	}
-
-	if warnings == 0 {
+	if meta.numWarningEvents == 0 {
 		// We don't consider warnings severe enough to prevent the XR from being
 		// considered synced (i.e. severe enough to return a ReconcileError) but
 		// they are severe enough that we probably shouldn't say we successfully
@@ -813,6 +773,50 @@ func getComposerResourcesNames(cds []ComposedResource) []string {
 		names[i] = string(cd.ResourceName)
 	}
 	return names
+}
+
+type compositionResultMeta struct {
+	numWarningEvents   int
+	conditionTypesSeen map[xpv1.ConditionType]struct{}
+}
+
+func handleCommonCompositionResult(r *Reconciler, res CompositionResult, ctx context.Context, xr *composite.Unstructured, log logging.Logger) compositionResultMeta {
+	cm, err := getClaimFromXR(r, ctx, xr)
+	if err != nil {
+		log.Debug(errGetClaim, "error", err)
+	}
+
+	numWarningEvents := 0
+	for _, e := range res.Events {
+		if e.Event.Type == event.TypeWarning {
+			numWarningEvents++
+		}
+		log.Debug(e.Event.Message)
+
+		r.record.Event(xr, e.Event)
+
+		if e.Target == CompositionTargetCompositeAndClaim && cm != nil {
+			r.record.Event(cm, e.Event)
+		}
+	}
+
+	conditionTypesSeen := make(map[xpv1.ConditionType]struct{})
+	for _, c := range res.Conditions {
+		if xpv1.IsSystemConditionType(c.Condition.Type) {
+			// Do not let users update system conditions.
+			continue
+		}
+		conditionTypesSeen[c.Condition.Type] = struct{}{}
+		xr.SetConditions(c.Condition)
+		if c.Target == CompositionTargetCompositeAndClaim {
+			xr.SetClaimConditions(c.Condition.Type)
+		}
+	}
+
+	return compositionResultMeta{
+		numWarningEvents:   numWarningEvents,
+		conditionTypesSeen: conditionTypesSeen,
+	}
 }
 
 func getClaimFromXR(r *Reconciler, ctx context.Context, xr *composite.Unstructured) (*claim.Unstructured, error) {

@@ -434,7 +434,9 @@ func (c *FunctionComposer) Compose(ctx context.Context, xr *composite.Unstructur
 			var e event.Event
 			switch rs.GetSeverity() {
 			case v1beta1.Severity_SEVERITY_FATAL:
-				return CompositionResult{Conditions: conditions}, errors.Errorf(errFmtFatalResult, fn.Step, rs.GetMessage())
+				// TODO(dalton, reviewers): Safe to add events here? This is a behavior
+				// change, but allows function authors to emit events prior to failure.
+				return CompositionResult{Events: events, Conditions: conditions}, errors.Errorf(errFmtFatalResult, fn.Step, rs.GetMessage())
 			case v1beta1.Severity_SEVERITY_WARNING:
 				e = event.Warning(reason, errors.Errorf("Pipeline step %q: %s", fn.Step, rs.GetMessage()))
 			case v1beta1.Severity_SEVERITY_NORMAL:
