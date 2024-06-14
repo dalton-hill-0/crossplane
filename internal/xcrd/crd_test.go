@@ -466,6 +466,14 @@ func TestForCompositeResource(t *testing.T) {
 														},
 													},
 												},
+												"claimConditions": {
+													Type: "array",
+													Items: &extv1.JSONSchemaPropsOrArray{
+														Schema: &extv1.JSONSchemaProps{
+															Type: "string",
+														},
+													},
+												},
 												"connectionDetails": {
 													Type: "object",
 													Properties: map[string]extv1.JSONSchemaProps{
@@ -783,6 +791,14 @@ func TestForCompositeResource(t *testing.T) {
 														},
 													},
 												},
+												"claimConditions": {
+													Type: "array",
+													Items: &extv1.JSONSchemaPropsOrArray{
+														Schema: &extv1.JSONSchemaProps{
+															Type: "string",
+														},
+													},
+												},
 												"connectionDetails": {
 													Type: "object",
 													Properties: map[string]extv1.JSONSchemaProps{
@@ -1047,6 +1063,14 @@ func TestForCompositeResource(t *testing.T) {
 																"status":             {Type: "string"},
 																"type":               {Type: "string"},
 															},
+														},
+													},
+												},
+												"claimConditions": {
+													Type: "array",
+													Items: &extv1.JSONSchemaPropsOrArray{
+														Schema: &extv1.JSONSchemaProps{
+															Type: "string",
 														},
 													},
 												},
@@ -1330,6 +1354,14 @@ func TestForCompositeResource(t *testing.T) {
 																"status":             {Type: "string"},
 																"type":               {Type: "string"},
 															},
+														},
+													},
+												},
+												"claimConditions": {
+													Type: "array",
+													Items: &extv1.JSONSchemaPropsOrArray{
+														Schema: &extv1.JSONSchemaProps{
+															Type: "string",
 														},
 													},
 												},
@@ -1623,6 +1655,14 @@ func TestForCompositeResource(t *testing.T) {
 																"status":             {Type: "string"},
 																"type":               {Type: "string"},
 															},
+														},
+													},
+												},
+												"claimConditions": {
+													Type: "array",
+													Items: &extv1.JSONSchemaPropsOrArray{
+														Schema: &extv1.JSONSchemaProps{
+															Type: "string",
 														},
 													},
 												},
@@ -2119,6 +2159,14 @@ func TestForCompositeResourceClaim(t *testing.T) {
 														},
 													},
 												},
+												"claimConditions": {
+													Type: "array",
+													Items: &extv1.JSONSchemaPropsOrArray{
+														Schema: &extv1.JSONSchemaProps{
+															Type: "string",
+														},
+													},
+												},
 												"connectionDetails": {
 													Type: "object",
 													Properties: map[string]extv1.JSONSchemaProps{
@@ -2402,6 +2450,14 @@ func TestForCompositeResourceClaim(t *testing.T) {
 																"status":             {Type: "string"},
 																"type":               {Type: "string"},
 															},
+														},
+													},
+												},
+												"claimConditions": {
+													Type: "array",
+													Items: &extv1.JSONSchemaPropsOrArray{
+														Schema: &extv1.JSONSchemaProps{
+															Type: "string",
 														},
 													},
 												},
@@ -2702,6 +2758,14 @@ func TestForCompositeResourceClaimEmptyXrd(t *testing.T) {
 														"status":             {Type: "string"},
 														"type":               {Type: "string"},
 													},
+												},
+											},
+										},
+										"claimConditions": {
+											Type: "array",
+											Items: &extv1.JSONSchemaPropsOrArray{
+												Schema: &extv1.JSONSchemaProps{
+													Type: "string",
 												},
 											},
 										},

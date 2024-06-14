@@ -526,6 +526,14 @@ func TestConvertToCRDs(t *testing.T) {
 																},
 															},
 														},
+														"claimConditions": {
+															Type: "array",
+															Items: &extv1.JSONSchemaPropsOrArray{
+																Schema: &extv1.JSONSchemaProps{
+																	Type: "string",
+																},
+															},
+														},
 														"connectionDetails": {
 															Type: "object",
 															Properties: map[string]extv1.JSONSchemaProps{
@@ -869,6 +877,14 @@ func TestConvertToCRDs(t *testing.T) {
 																},
 															},
 														},
+														"claimConditions": {
+															Type: "array",
+															Items: &extv1.JSONSchemaPropsOrArray{
+																Schema: &extv1.JSONSchemaProps{
+																	Type: "string",
+																},
+															},
+														},
 														"connectionDetails": {
 															Type: "object",
 															Properties: map[string]extv1.JSONSchemaProps{
@@ -1110,6 +1126,14 @@ func TestConvertToCRDs(t *testing.T) {
 																		"status":             {Type: "string"},
 																		"type":               {Type: "string"},
 																	},
+																},
+															},
+														},
+														"claimConditions": {
+															Type: "array",
+															Items: &extv1.JSONSchemaPropsOrArray{
+																Schema: &extv1.JSONSchemaProps{
+																	Type: "string",
 																},
 															},
 														},

@@ -692,21 +692,31 @@ func TestFunctionCompose(t *testing.T) {
 					ConnectionDetails: managed.ConnectionDetails{
 						"from": []byte("function-pipeline"),
 					},
-					Events: []event.Event{
+					Events: []TargetedEvent{
 						{
-							Type:    "Normal",
-							Reason:  "ComposeResources",
-							Message: "Pipeline step \"run-cool-function\": A normal result",
+							Event: event.Event{
+								Type:    "Normal",
+								Reason:  "ComposeResources",
+								Message: "Pipeline step \"run-cool-function\": A normal result",
+							},
+							Target: CompositionTargetComposite,
 						},
 						{
-							Type:    "Warning",
-							Reason:  "ComposeResources",
-							Message: "Pipeline step \"run-cool-function\": A warning result",
+							Event: event.Event{
+								Type:    "Warning",
+								Reason:  "ComposeResources",
+								Message: "Pipeline step \"run-cool-function\": A warning result",
+							},
+
+							Target: CompositionTargetComposite,
 						},
 						{
-							Type:    "Warning",
-							Reason:  "ComposeResources",
-							Message: "Pipeline step \"run-cool-function\" returned a result of unknown severity (assuming warning): A result of unspecified severity",
+							Event: event.Event{
+								Type:    "Warning",
+								Reason:  "ComposeResources",
+								Message: "Pipeline step \"run-cool-function\" returned a result of unknown severity (assuming warning): A result of unspecified severity",
+							},
+							Target: CompositionTargetComposite,
 						},
 					},
 				},
@@ -893,21 +903,30 @@ func TestFunctionCompose(t *testing.T) {
 					ConnectionDetails: managed.ConnectionDetails{
 						"from": []byte("function-pipeline"),
 					},
-					Events: []event.Event{
+					Events: []TargetedEvent{
 						{
-							Type:    "Normal",
-							Reason:  "ComposeResources",
-							Message: "Pipeline step \"run-cool-function\": A normal result",
+							Event: event.Event{
+								Type:    "Normal",
+								Reason:  "ComposeResources",
+								Message: "Pipeline step \"run-cool-function\": A normal result",
+							},
+							Target: CompositionTargetComposite,
 						},
 						{
-							Type:    "Warning",
-							Reason:  "ComposeResources",
-							Message: "Pipeline step \"run-cool-function\": A warning result",
+							Event: event.Event{
+								Type:    "Warning",
+								Reason:  "ComposeResources",
+								Message: "Pipeline step \"run-cool-function\": A warning result",
+							},
+							Target: CompositionTargetComposite,
 						},
 						{
-							Type:    "Warning",
-							Reason:  "ComposeResources",
-							Message: "Pipeline step \"run-cool-function\" returned a result of unknown severity (assuming warning): A result of unspecified severity",
+							Event: event.Event{
+								Type:    "Warning",
+								Reason:  "ComposeResources",
+								Message: "Pipeline step \"run-cool-function\" returned a result of unknown severity (assuming warning): A result of unspecified severity",
+							},
+							Target: CompositionTargetComposite,
 						},
 					},
 				},

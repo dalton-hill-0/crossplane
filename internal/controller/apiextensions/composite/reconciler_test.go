@@ -446,7 +446,12 @@ func TestReconcile(t *testing.T) {
 					})),
 					WithComposer(ComposerFn(func(_ context.Context, _ *composite.Unstructured, _ CompositionRequest) (CompositionResult, error) {
 						return CompositionResult{
-							Events: []event.Event{event.Warning("Warning", errBoom)},
+							Events: []TargetedEvent{
+								{
+									Event:  event.Warning("Warning", errBoom),
+									Target: CompositionTargetComposite,
+								},
+							},
 						}, nil
 					})),
 					WithConnectionPublishers(managed.ConnectionPublisherFns{
