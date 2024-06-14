@@ -535,6 +535,64 @@ func TestReconcile(t *testing.T) {
 				r: reconcile.Result{Requeue: false},
 			},
 		},
+		"ClaimConditions": {
+			reason: "We should copy custom conditions from the XR if seen in the claimConditions array.",
+			args: args{
+				client: &test.MockClient{
+					MockGet: test.NewMockGetFn(nil, func(obj client.Object) error {
+						switch o := obj.(type) {
+						case *claim.Unstructured:
+							// We won't try to get an XR unless the claim
+							// references one.
+							o.SetResourceReference(&corev1.ObjectReference{Name: "cool-composite"})
+							// The system conditions are already set.
+							o.SetConditions(xpv1.ReconcileSuccess())
+							o.SetConditions(xpv1.Available())
+							// Database was marked as creating in a prior reconciliation.
+							o.SetConditions(newCondition("DatabaseReady", corev1.ConditionFalse, "Creating"))
+						case *composite.Unstructured:
+							// Pretend the XR exists and is available.
+							o.SetCreationTimestamp(now)
+							o.SetClaimReference(&claim.Reference{})
+							o.SetConditions(xpv1.Available())
+							// Database has become ready.
+							o.SetConditions(newCondition("DatabaseReady", corev1.ConditionTrue, "Available"))
+							// Bucket is a new condition.
+							o.SetConditions(newCondition("BucketReady", corev1.ConditionTrue, "Creating"))
+							// Internal condition should not be copied over.
+							o.SetConditions(newCondition("InternalSync", corev1.ConditionFalse, "Waiting"))
+							// Database and Bucket are claim conditions so they should be
+							// copied over.
+							o.SetClaimConditions("DatabaseReady", "BucketReady")
+						}
+						return nil
+					}),
+					MockStatusUpdate: WantClaim(t, NewClaim(func(cm *claim.Unstructured) {
+						// Check that we set our status condition.
+						cm.SetResourceReference(&corev1.ObjectReference{Name: "cool-composite"})
+						cm.SetConnectionDetailsLastPublishedTime(&now)
+						cm.SetConditions(xpv1.ReconcileSuccess())
+						cm.SetConditions(xpv1.Available())
+						// Database should have been updated to show ready.
+						cm.SetConditions(newCondition("DatabaseReady", corev1.ConditionTrue, "Available"))
+						// Bucket should have been created.
+						cm.SetConditions(newCondition("BucketReady", corev1.ConditionTrue, "Creating"))
+					})),
+				},
+				opts: []ReconcilerOption{
+					WithClaimFinalizer(resource.FinalizerFns{
+						AddFinalizerFn: func(_ context.Context, _ resource.Object) error { return nil },
+					}),
+					WithCompositeSyncer(CompositeSyncerFn(func(_ context.Context, _ *claim.Unstructured, _ *composite.Unstructured) error { return nil })),
+					WithConnectionPropagator(ConnectionPropagatorFn(func(_ context.Context, _ resource.LocalConnectionSecretOwner, _ resource.ConnectionSecretOwner) (propagated bool, err error) {
+						return true, nil
+					})),
+				},
+			},
+			want: want{
+				r: reconcile.Result{Requeue: false},
+			},
+		},
 	}
 
 	for name, tc := range cases {
@@ -581,5 +639,13 @@ func WantClaim(t *testing.T, want *claim.Unstructured) func(_ context.Context, o
 			t.Errorf("WantClaim(...): -want, +got: %s", diff)
 		}
 		return nil
+	}
+}
+
+func newCondition(typ string, status corev1.ConditionStatus, reason string) xpv1.Condition {
+	return xpv1.Condition{
+		Type:   xpv1.ConditionType(typ),
+		Status: status,
+		Reason: xpv1.ConditionReason(reason),
 	}
 }
