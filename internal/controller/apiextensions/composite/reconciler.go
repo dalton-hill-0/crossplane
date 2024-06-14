@@ -643,7 +643,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 
 		conditionsSeen := make(map[xpv1.ConditionType]struct{})
 		for _, c := range res.Conditions {
-			if isSystemCondition(c.Condition.Type) {
+			if xpv1.IsSystemConditionType(c.Condition.Type) {
 				// Do not let users update system conditions.
 				continue
 			}
@@ -653,7 +653,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 		}
 
 		for _, c := range xr.GetConditions() {
-			if isSystemCondition(c.Type) {
+			if xpv1.IsSystemConditionType(c.Type) {
 				continue
 			}
 			if _, ok := conditionsSeen[c.Type]; !ok {
@@ -729,7 +729,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	}
 
 	for _, c := range res.Conditions {
-		if isSystemCondition(c.Condition.Type) {
+		if xpv1.IsSystemConditionType(c.Condition.Type) {
 			// Do not let users update system conditions.
 			continue
 		}
@@ -832,11 +832,4 @@ func getClaimFromXR(r *Reconciler, ctx context.Context, xr *composite.Unstructur
 		return nil, errors.Wrap(err, errGetClaim)
 	}
 	return cm, nil
-}
-
-// isSystemCondition returns true if the given condition is a system condition
-// (e.g., Ready or Synced).
-func isSystemCondition(ct xpv1.ConditionType) bool {
-	// TODO: Add TypeHealthy when it is added.
-	return ct == xpv1.TypeReady || ct == xpv1.TypeSynced
 }
