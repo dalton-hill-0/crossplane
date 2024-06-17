@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -649,6 +650,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req reconcile.Request) (reco
 			if _, ok := meta.conditionTypesSeen[c.Type]; !ok {
 				c.Status = corev1.ConditionUnknown
 				c.Reason = reasonPriorFailure
+				c.Message = ""
 				xr.SetConditions(c)
 			}
 		}
@@ -786,6 +788,7 @@ func handleCommonCompositionResult(r *Reconciler, res CompositionResult, ctx con
 		log.Debug(errGetClaim, "error", err)
 	}
 
+	rxp := regexp.MustCompile(`Pipeline step ".+": `)
 	numWarningEvents := 0
 	for _, e := range res.Events {
 		if e.Event.Type == event.TypeWarning {
@@ -796,7 +799,13 @@ func handleCommonCompositionResult(r *Reconciler, res CompositionResult, ctx con
 		r.record.Event(xr, e.Event)
 
 		if e.Target == CompositionTargetCompositeAndClaim && cm != nil {
-			r.record.Event(cm, e.Event)
+			r.record.Event(cm, event.Event{
+				Type:        e.Event.Type,
+				Reason:      e.Event.Reason,
+				Annotations: e.Event.Annotations,
+				// Removes the pipeline details from the claim event message.
+				Message: rxp.Split(e.Event.Message, 2)[1],
+			})
 		}
 	}
 

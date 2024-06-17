@@ -573,9 +573,9 @@ func TestReconcile(t *testing.T) {
 						cm.SetConnectionDetailsLastPublishedTime(&now)
 						cm.SetConditions(xpv1.ReconcileSuccess())
 						cm.SetConditions(xpv1.Available())
-						// Database should have been updated to show ready.
+						// Database condition should have been updated to show ready.
 						cm.SetConditions(newCondition("DatabaseReady", corev1.ConditionTrue, "Available"))
-						// Bucket should have been created.
+						// Bucket condition should have been created.
 						cm.SetConditions(newCondition("BucketReady", corev1.ConditionTrue, "Creating"))
 					})),
 				},

@@ -81,6 +81,13 @@ const (
 	errFmtFunctionMaxIterations      = "step %q requirements didn't stabilize after the maximum number of iterations (%d)"
 )
 
+const (
+	// The composite reconciler removes this prefix from events emitted to the
+	// claim. If you change this prefix, you must change the code that removes the
+	// prefix.
+	eventFmtPipelineStepPrefix = "Pipeline step %q: %s"
+)
+
 // Server-side-apply field owners. We need two of these because it's possible
 // an invocation of this controller will operate on the same resource in two
 // different contexts. For example if an XR composes another XR we'll spin up
@@ -438,9 +445,9 @@ func (c *FunctionComposer) Compose(ctx context.Context, xr *composite.Unstructur
 				// change, but allows function authors to emit events prior to failure.
 				return CompositionResult{Events: events, Conditions: conditions}, errors.Errorf(errFmtFatalResult, fn.Step, rs.GetMessage())
 			case v1beta1.Severity_SEVERITY_WARNING:
-				e = event.Warning(reason, errors.Errorf("Pipeline step %q: %s", fn.Step, rs.GetMessage()))
+				e = event.Warning(reason, errors.Errorf(eventFmtPipelineStepPrefix, fn.Step, rs.GetMessage()))
 			case v1beta1.Severity_SEVERITY_NORMAL:
-				e = event.Normal(reason, fmt.Sprintf("Pipeline step %q: %s", fn.Step, rs.GetMessage()))
+				e = event.Normal(reason, fmt.Sprintf(eventFmtPipelineStepPrefix, fn.Step, rs.GetMessage()))
 			case v1beta1.Severity_SEVERITY_UNSPECIFIED:
 				// We could hit this case if a Function was built against a newer
 				// protobuf than this build of Crossplane, and the new protobuf

@@ -740,18 +740,74 @@ func TestReconcile(t *testing.T) {
 					}),
 					MockStatusUpdate: WantComposite(t, NewComposite(func(cr resource.Composite) {
 						cr.SetCompositionReference(&corev1.ObjectReference{})
-						cr.SetConditions(databaseAvailableCondition(), internalSyncCondition(), xpv1.ReconcileSuccess(), xpv1.Available())
-						cr.(*composite.Unstructured).SetClaimConditions(databaseAvailableCondition().Type)
+						cr.SetConditions(
+							xpv1.Condition{
+								Type:    "DatabaseReady",
+								Status:  corev1.ConditionTrue,
+								Reason:  "Available",
+								Message: "This is a condition for database availability.",
+							},
+							xpv1.Condition{
+								Type:               "InternalSync",
+								Status:             corev1.ConditionTrue,
+								LastTransitionTime: metav1.Time{},
+								Reason:             "SyncSuccess",
+								Message:            "This is a condition representing an internal sync process.",
+								ObservedGeneration: 0,
+							},
+							xpv1.ReconcileSuccess(),
+							xpv1.Available(),
+						)
+						cr.(*composite.Unstructured).SetClaimConditions("DatabaseReady")
 						cr.SetClaimReference(&claim.Reference{})
 					})),
 				},
 				opts: []ReconcilerOption{
 					WithRecorder(newTestRecorder(
-						eventArgs{Kind: compositeKind, Event: successfulSelectCompositionEvent()},
-						eventArgs{Kind: compositeKind, Event: databaseAvailableEvent()},
-						eventArgs{Kind: claimKind, Event: databaseAvailableEvent()},
-						eventArgs{Kind: compositeKind, Event: internalSyncEvent()},
-						eventArgs{Kind: compositeKind, Event: successfulComposeResourcesEvent()},
+						eventArgs{
+							Kind: compositeKind,
+							Event: event.Event{
+								Type:        event.Type(corev1.EventTypeNormal),
+								Reason:      "SelectComposition",
+								Message:     "Successfully selected composition: ",
+								Annotations: map[string]string{},
+							},
+						},
+						eventArgs{
+							Kind: compositeKind,
+							Event: event.Event{
+								Type:        event.TypeNormal,
+								Reason:      "DatabaseAvailable",
+								Message:     "Pipeline step \"some-function\": This is an event for database availability.",
+								Annotations: map[string]string{},
+							}},
+						eventArgs{
+							Kind: claimKind,
+							Event: event.Event{
+								Type:   event.TypeNormal,
+								Reason: "DatabaseAvailable",
+								// The claim message should have the "Pipeline step \"xyz\": "
+								// prefix removed.
+								Message:     "This is an event for database availability.",
+								Annotations: map[string]string{},
+							}},
+						eventArgs{
+							Kind: compositeKind,
+							Event: event.Event{
+								Type:        event.TypeNormal,
+								Reason:      "SyncSuccess",
+								Message:     "Pipeline step \"some-function\": Internal sync was successful.",
+								Annotations: map[string]string{},
+							}},
+						eventArgs{
+							Kind: compositeKind,
+							Event: event.Event{
+								Type:        event.Type(corev1.EventTypeNormal),
+								Reason:      "ComposeResources",
+								Message:     "Successfully composed resources",
+								Annotations: map[string]string{},
+							},
+						},
 					)),
 					WithCompositeFinalizer(resource.NewNopFinalizer()),
 					WithCompositionSelector(CompositionSelectorFn(func(_ context.Context, cr resource.Composite) error {
@@ -770,12 +826,46 @@ func TestReconcile(t *testing.T) {
 							Composed:          []ComposedResource{},
 							ConnectionDetails: cd,
 							Events: []TargetedEvent{
-								{Event: databaseAvailableEvent(), Target: CompositionTargetCompositeAndClaim},
-								{Event: internalSyncEvent(), Target: CompositionTargetComposite},
+								{
+									Event: event.Event{
+										Type:        event.TypeNormal,
+										Reason:      "DatabaseAvailable",
+										Message:     "Pipeline step \"some-function\": This is an event for database availability.",
+										Annotations: map[string]string{},
+									},
+									Target: CompositionTargetCompositeAndClaim,
+								},
+								{
+									Event: event.Event{
+										Type:        event.TypeNormal,
+										Reason:      "SyncSuccess",
+										Message:     "Pipeline step \"some-function\": Internal sync was successful.",
+										Annotations: map[string]string{},
+									},
+									Target: CompositionTargetComposite,
+								},
 							},
 							Conditions: []TargetedCondition{
-								{Condition: databaseAvailableCondition(), Target: CompositionTargetCompositeAndClaim},
-								{Condition: internalSyncCondition(), Target: CompositionTargetComposite},
+								{
+									Condition: xpv1.Condition{
+										Type:    "DatabaseReady",
+										Status:  corev1.ConditionTrue,
+										Reason:  "Available",
+										Message: "This is a condition for database availability.",
+									},
+									Target: CompositionTargetCompositeAndClaim,
+								},
+								{
+									Condition: xpv1.Condition{
+										Type:               "InternalSync",
+										Status:             corev1.ConditionTrue,
+										LastTransitionTime: metav1.Time{},
+										Reason:             "SyncSuccess",
+										Message:            "This is a condition representing an internal sync process.",
+										ObservedGeneration: 0,
+									},
+									Target: CompositionTargetComposite,
+								},
 							},
 						}, nil
 					})),
@@ -793,8 +883,13 @@ func TestReconcile(t *testing.T) {
 						if xr, ok := obj.(*composite.Unstructured); ok {
 							// non-nil claim ref to trigger claim Get()
 							xr.SetClaimReference(&claim.Reference{})
-							xr.SetConditions(databaseAvailableCondition())
-							xr.SetClaimConditions(databaseAvailableCondition().Type)
+							xr.SetConditions(xpv1.Condition{
+								Type:    "DatabaseReady",
+								Status:  corev1.ConditionTrue,
+								Reason:  "Available",
+								Message: "This is a condition for database availability.",
+							})
+							xr.SetClaimConditions("DatabaseReady")
 							return nil
 						}
 						if cm, ok := obj.(*claim.Unstructured); ok {
@@ -806,26 +901,81 @@ func TestReconcile(t *testing.T) {
 					MockStatusUpdate: WantComposite(t, NewComposite(func(cr resource.Composite) {
 						cr.SetCompositionReference(&corev1.ObjectReference{})
 
-						dbUnknown := databaseAvailableCondition()
-						dbUnknown.Status = corev1.ConditionUnknown
-						dbUnknown.Reason = "PriorFailure"
 						errCondition := xpv1.ReconcileError(fmt.Errorf("cannot compose resources: %s", errBoom))
-						cr.SetConditions(dbUnknown, internalSyncCondition(), bucketAvailableCondition(), errCondition)
+						cr.SetConditions(
+							xpv1.Condition{
+								Type:   "DatabaseReady",
+								Status: corev1.ConditionUnknown,
+								Reason: "PriorFailure",
+								// The message should have been removed.
+							},
+							xpv1.Condition{
+								Type:               "InternalSync",
+								Status:             corev1.ConditionTrue,
+								LastTransitionTime: metav1.Time{},
+								Reason:             "SyncSuccess",
+								Message:            "This is a condition representing an internal sync process.",
+								ObservedGeneration: 0,
+							},
+							xpv1.Condition{
+								Type:               "BucketReady",
+								Status:             corev1.ConditionTrue,
+								LastTransitionTime: metav1.Time{},
+								Reason:             "Available",
+								Message:            "This is a condition for bucket availability.",
+								ObservedGeneration: 0,
+							},
+							errCondition,
+						)
 
 						cr.(*composite.Unstructured).SetClaimConditions(
-							databaseAvailableCondition().Type,
-							bucketAvailableCondition().Type,
+							"DatabaseReady",
+							"BucketReady",
 						)
 						cr.SetClaimReference(&claim.Reference{})
 					})),
 				},
 				opts: []ReconcilerOption{
 					WithRecorder(newTestRecorder(
-						eventArgs{Kind: compositeKind, Event: successfulSelectCompositionEvent()},
-						eventArgs{Kind: compositeKind, Event: databaseAvailableEvent()},
-						eventArgs{Kind: claimKind, Event: databaseAvailableEvent()},
-						eventArgs{Kind: compositeKind, Event: internalSyncEvent()},
-						eventArgs{Kind: compositeKind, Event: event.Warning("ComposeResources", fmt.Errorf("cannot compose resources: %s", errBoom))},
+						eventArgs{
+							Kind: compositeKind,
+							Event: event.Event{
+								Type:        event.Type(corev1.EventTypeNormal),
+								Reason:      "SelectComposition",
+								Message:     "Successfully selected composition: ",
+								Annotations: map[string]string{},
+							},
+						},
+						eventArgs{
+							Kind: compositeKind,
+							Event: event.Event{
+								Type:    event.TypeNormal,
+								Reason:  "DatabaseAvailable",
+								Message: "Pipeline step \"some-function\": This is an event for database availability.",
+							},
+						},
+						eventArgs{
+							Kind: claimKind,
+							Event: event.Event{
+								Type:   event.TypeNormal,
+								Reason: "DatabaseAvailable",
+								// The claim message should have the "Pipeline step \"xyz\": "
+								// prefix removed.
+								Message: "This is an event for database availability.",
+							},
+						},
+						eventArgs{
+							Kind: compositeKind,
+							Event: event.Event{
+								Type:        event.TypeNormal,
+								Reason:      "SyncSuccess",
+								Message:     "Pipeline step \"some-function\": Internal sync was successful.",
+								Annotations: map[string]string{},
+							}},
+						eventArgs{
+							Kind:  compositeKind,
+							Event: event.Warning("ComposeResources", fmt.Errorf("cannot compose resources: %s", errBoom)),
+						},
 					)),
 					WithCompositeFinalizer(resource.NewNopFinalizer()),
 					WithCompositionSelector(CompositionSelectorFn(func(_ context.Context, cr resource.Composite) error {
@@ -844,12 +994,47 @@ func TestReconcile(t *testing.T) {
 							Composed:          []ComposedResource{},
 							ConnectionDetails: cd,
 							Events: []TargetedEvent{
-								{Event: databaseAvailableEvent(), Target: CompositionTargetCompositeAndClaim},
-								{Event: internalSyncEvent(), Target: CompositionTargetComposite},
+								{
+									Event: event.Event{
+										Type:    event.TypeNormal,
+										Reason:  "DatabaseAvailable",
+										Message: "Pipeline step \"some-function\": This is an event for database availability.",
+									},
+									Target: CompositionTargetCompositeAndClaim,
+								},
+								{
+									Event: event.Event{
+										Type:        event.TypeNormal,
+										Reason:      "SyncSuccess",
+										Message:     "Pipeline step \"some-function\": Internal sync was successful.",
+										Annotations: map[string]string{},
+									},
+									Target: CompositionTargetComposite,
+								},
 							},
 							Conditions: []TargetedCondition{
-								{Condition: internalSyncCondition(), Target: CompositionTargetComposite},
-								{Condition: bucketAvailableCondition(), Target: CompositionTargetCompositeAndClaim},
+								{
+									Condition: xpv1.Condition{
+										Type:               "InternalSync",
+										Status:             corev1.ConditionTrue,
+										LastTransitionTime: metav1.Time{},
+										Reason:             "SyncSuccess",
+										Message:            "This is a condition representing an internal sync process.",
+										ObservedGeneration: 0,
+									},
+									Target: CompositionTargetComposite,
+								},
+								{
+									Condition: xpv1.Condition{
+										Type:               "BucketReady",
+										Status:             corev1.ConditionTrue,
+										LastTransitionTime: metav1.Time{},
+										Reason:             "Available",
+										Message:            "This is a condition for bucket availability.",
+										ObservedGeneration: 0,
+									},
+									Target: CompositionTargetCompositeAndClaim,
+								},
 							},
 						}, errBoom
 					})),
@@ -868,15 +1053,21 @@ func TestReconcile(t *testing.T) {
 							// non-nil claim ref to trigger claim Get()
 							xr.SetClaimReference(&claim.Reference{})
 							// The database condition already exists on the XR.
-							xr.SetConditions(databaseAvailableCondition())
+							xr.SetConditions(xpv1.Condition{
+								Type:    "DatabaseReady",
+								Status:  corev1.ConditionTrue,
+								Reason:  "Available",
+								Message: "This is a condition for database availability.",
+							})
 							// The bucket began in a non-ready state.
-							bucketNotAvailable := bucketAvailableCondition()
-							bucketNotAvailable.Status = corev1.ConditionFalse
-							bucketNotAvailable.Reason = "Creating"
-							bucketNotAvailable.Message = "Waiting for bucket to be created."
-							xr.SetConditions(bucketNotAvailable)
+							xr.SetConditions(xpv1.Condition{
+								Type:    "BucketReady",
+								Status:  corev1.ConditionFalse,
+								Reason:  "Creating",
+								Message: "Waiting for bucket to be created.",
+							})
 
-							xr.SetClaimConditions(databaseAvailableCondition().Type, bucketNotAvailable.Type)
+							xr.SetClaimConditions("DatabaseReady", "BucketReady")
 							return nil
 						}
 						if cm, ok := obj.(*claim.Unstructured); ok {
@@ -890,27 +1081,62 @@ func TestReconcile(t *testing.T) {
 						cr.SetConditions(
 							// The database condition should exist even though it was not seen
 							// during this reconcile.
-							databaseAvailableCondition(),
+							xpv1.Condition{
+								Type:    "DatabaseReady",
+								Status:  corev1.ConditionTrue,
+								Reason:  "Available",
+								Message: "This is a condition for database availability.",
+							},
 							// The bucket condition should be updated to reflect the latest
 							// condition which is available.
-							bucketAvailableCondition(),
-							internalSyncCondition(),
+							xpv1.Condition{
+								Type:               "BucketReady",
+								Status:             corev1.ConditionTrue,
+								LastTransitionTime: metav1.Time{},
+								Reason:             "Available",
+								Message:            "This is a condition for bucket availability.",
+								ObservedGeneration: 0,
+							},
+							xpv1.Condition{
+								Type:               "InternalSync",
+								Status:             corev1.ConditionTrue,
+								LastTransitionTime: metav1.Time{},
+								Reason:             "SyncSuccess",
+								Message:            "This is a condition representing an internal sync process.",
+								ObservedGeneration: 0,
+							},
 							xpv1.ReconcileSuccess(),
 							xpv1.Available(),
 						)
 						cr.(*composite.Unstructured).SetClaimConditions(
 							// The database claim condition should exist even though it was
 							// not seen during this reconcile.
-							databaseAvailableCondition().Type,
-							bucketAvailableCondition().Type,
+							"DatabaseReady",
+							"BucketReady",
 						)
 						cr.SetClaimReference(&claim.Reference{})
 					})),
 				},
 				opts: []ReconcilerOption{
 					WithRecorder(newTestRecorder(
-						eventArgs{Kind: compositeKind, Event: successfulSelectCompositionEvent()},
-						eventArgs{Kind: compositeKind, Event: successfulComposeResourcesEvent()},
+						eventArgs{
+							Kind: compositeKind,
+							Event: event.Event{
+								Type:        event.Type(corev1.EventTypeNormal),
+								Reason:      "SelectComposition",
+								Message:     "Successfully selected composition: ",
+								Annotations: map[string]string{},
+							},
+						},
+						eventArgs{
+							Kind: compositeKind,
+							Event: event.Event{
+								Type:        event.Type(corev1.EventTypeNormal),
+								Reason:      "ComposeResources",
+								Message:     "Successfully composed resources",
+								Annotations: map[string]string{},
+							},
+						},
 					)),
 					WithCompositeFinalizer(resource.NewNopFinalizer()),
 					WithCompositionSelector(CompositionSelectorFn(func(_ context.Context, cr resource.Composite) error {
@@ -931,9 +1157,29 @@ func TestReconcile(t *testing.T) {
 							Events:            []TargetedEvent{},
 							Conditions: []TargetedCondition{
 								// The database condition is not added to the XR again.
-								{Condition: internalSyncCondition(), Target: CompositionTargetComposite},
+								{
+									Condition: xpv1.Condition{
+										Type:               "InternalSync",
+										Status:             corev1.ConditionTrue,
+										LastTransitionTime: metav1.Time{},
+										Reason:             "SyncSuccess",
+										Message:            "This is a condition representing an internal sync process.",
+										ObservedGeneration: 0,
+									},
+									Target: CompositionTargetComposite,
+								},
 								// The bucket is now ready.
-								{Condition: bucketAvailableCondition(), Target: CompositionTargetCompositeAndClaim},
+								{
+									Condition: xpv1.Condition{
+										Type:               "BucketReady",
+										Status:             corev1.ConditionTrue,
+										LastTransitionTime: metav1.Time{},
+										Reason:             "Available",
+										Message:            "This is a condition for bucket availability.",
+										ObservedGeneration: 0,
+									},
+									Target: CompositionTargetCompositeAndClaim,
+								},
 							},
 						}, nil
 					})),
@@ -1101,74 +1347,5 @@ func (r *testRecorder) WithAnnotations(keysAndValues ...string) event.Recorder {
 func newTestRecorder(expected ...eventArgs) *testRecorder {
 	return &testRecorder{
 		Want: expected,
-	}
-}
-
-func bucketAvailableCondition() xpv1.Condition {
-	return xpv1.Condition{
-		Type:               "BucketReady",
-		Status:             corev1.ConditionTrue,
-		LastTransitionTime: metav1.Time{},
-		Reason:             "Available",
-		Message:            "This is a condition for bucket availability.",
-		ObservedGeneration: 0,
-	}
-}
-
-func databaseAvailableCondition() xpv1.Condition {
-	return xpv1.Condition{
-		Type:               "DatabaseReady",
-		Status:             corev1.ConditionTrue,
-		LastTransitionTime: metav1.Time{},
-		Reason:             "Available",
-		Message:            "This is a condition for database availability.",
-		ObservedGeneration: 0,
-	}
-}
-
-func databaseAvailableEvent() event.Event {
-	return event.Event{
-		Type:        event.TypeNormal,
-		Reason:      "DatabaseAvailable",
-		Message:     "This is an event for database availability.",
-		Annotations: map[string]string{},
-	}
-}
-
-func internalSyncCondition() xpv1.Condition {
-	return xpv1.Condition{
-		Type:               "InternalSync",
-		Status:             corev1.ConditionTrue,
-		LastTransitionTime: metav1.Time{},
-		Reason:             "SyncSuccess",
-		Message:            "This is a condition representing an internal sync process.",
-		ObservedGeneration: 0,
-	}
-}
-
-func internalSyncEvent() event.Event {
-	return event.Event{
-		Type:        event.TypeNormal,
-		Reason:      "SyncSuccess",
-		Message:     "Internal sync was successful.",
-		Annotations: map[string]string{},
-	}
-}
-
-func successfulSelectCompositionEvent() event.Event {
-	return event.Event{
-		Type:        event.Type(corev1.EventTypeNormal),
-		Reason:      "SelectComposition",
-		Message:     "Successfully selected composition: ",
-		Annotations: map[string]string{},
-	}
-}
-
-func successfulComposeResourcesEvent() event.Event {
-	return event.Event{
-		Type:        event.Type(corev1.EventTypeNormal),
-		Reason:      "ComposeResources",
-		Message:     "Successfully composed resources",
-		Annotations: map[string]string{},
 	}
 }

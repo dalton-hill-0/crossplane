@@ -229,14 +229,57 @@ func TestFunctionCompose(t *testing.T) {
 			},
 		},
 		"FatalFunctionResultError": {
-			reason: "We should return any fatal function results as an error",
+			reason: "We should return any fatal function results as an error. Any conditions returned by the function should be passed up. Any results returned by the function prior to the fatal result should be passed up.",
 			params: params{
 				r: FunctionRunnerFn(func(_ context.Context, _ string, _ *v1beta1.RunFunctionRequest) (rsp *v1beta1.RunFunctionResponse, err error) {
-					r := &v1beta1.Result{
-						Severity: v1beta1.Severity_SEVERITY_FATAL,
-						Message:  "oh no",
-					}
-					return &v1beta1.RunFunctionResponse{Results: []*v1beta1.Result{r}}, nil
+					return &v1beta1.RunFunctionResponse{
+						Results: []*v1beta1.Result{
+							// This result should be passed up as it was sent before the fatal
+							// result. The reason should be defaulted. The target should be
+							// defaulted.
+							&v1beta1.Result{
+								Severity: v1beta1.Severity_SEVERITY_NORMAL,
+								Message:  "A result before the fatal result with the default Reason.",
+							},
+							// This result should be passed up as it was sent before the fatal
+							// result. The reason should be kept. The target should be kept.
+							&v1beta1.Result{
+								Severity: v1beta1.Severity_SEVERITY_NORMAL,
+								Reason:   ptr.To("SomeReason"),
+								Message:  "A result before the fatal result with a specific Reason.",
+								Target:   v1beta1.Target_TARGET_COMPOSITE_AND_CLAIM.Enum(),
+							},
+							// The fatal result
+							&v1beta1.Result{
+								Severity: v1beta1.Severity_SEVERITY_FATAL,
+								Message:  "oh no",
+							},
+							// This result should not be passed up as it was sent after the
+							// fatal result.
+							&v1beta1.Result{
+								Severity: v1beta1.Severity_SEVERITY_NORMAL,
+								Message:  "a result after the fatal result",
+							},
+						},
+						Conditions: []*v1beta1.Condition{
+							// A condition returned by the function with only the minimum
+							// necessary values.
+							{
+								Type:   "DatabaseReady",
+								Status: v1beta1.Status_STATUS_CONDITION_FALSE,
+								Reason: "Creating",
+							},
+							// A condition returned by the function with all optional values
+							// given.
+							{
+								Type:    "DeploymentReady",
+								Status:  v1beta1.Status_STATUS_CONDITION_TRUE,
+								Reason:  "Available",
+								Message: ptr.To("The deployment is ready."),
+								Target:  v1beta1.Target_TARGET_COMPOSITE_AND_CLAIM.Enum(),
+							},
+						},
+					}, nil
 				}),
 				o: []FunctionComposerOption{
 					WithCompositeConnectionDetailsFetcher(ConnectionDetailsFetcherFn(func(_ context.Context, _ resource.ConnectionSecretOwner) (managed.ConnectionDetails, error) {
@@ -264,6 +307,49 @@ func TestFunctionCompose(t *testing.T) {
 			},
 			want: want{
 				err: errors.Errorf(errFmtFatalResult, "run-cool-function", "oh no"),
+				res: CompositionResult{
+					Events: []TargetedEvent{
+						// The event with minimum values.
+						TargetedEvent{
+							Event: event.Event{
+								Type:    "Normal",
+								Reason:  "ComposeResources",
+								Message: "Pipeline step \"run-cool-function\": A result before the fatal result with the default Reason.",
+							},
+							Target: CompositionTargetComposite,
+						},
+						// The event that provides all possible values.
+						TargetedEvent{
+							Event: event.Event{
+								Type:    "Normal",
+								Reason:  "SomeReason",
+								Message: "Pipeline step \"run-cool-function\": A result before the fatal result with a specific Reason.",
+							},
+							Target: CompositionTargetCompositeAndClaim,
+						},
+					},
+					Conditions: []TargetedCondition{
+						// The condition with minimum values.
+						{
+							Condition: xpv1.Condition{
+								Type:   "DatabaseReady",
+								Status: "False",
+								Reason: "Creating",
+							},
+							Target: CompositionTargetComposite,
+						},
+						// The condition that provides all possible values.
+						{
+							Condition: xpv1.Condition{
+								Type:    "DeploymentReady",
+								Status:  "True",
+								Reason:  "Available",
+								Message: "The deployment is ready.",
+							},
+							Target: CompositionTargetCompositeAndClaim,
+						},
+					},
+				},
 			},
 		},
 		"RenderComposedResourceMetadataError": {
@@ -620,6 +706,30 @@ func TestFunctionCompose(t *testing.T) {
 								Severity: v1beta1.Severity_SEVERITY_UNSPECIFIED,
 								Message:  "A result of unspecified severity",
 							},
+							{
+								Severity: v1beta1.Severity_SEVERITY_NORMAL,
+								Reason:   ptr.To("SomeReason"),
+								Message:  "A result with all values explicitly set.",
+								Target:   v1beta1.Target_TARGET_COMPOSITE_AND_CLAIM.Enum(),
+							},
+						},
+						Conditions: []*v1beta1.Condition{
+							// A condition returned by the function with only the minimum
+							// necessary values.
+							{
+								Type:   "DatabaseReady",
+								Status: v1beta1.Status_STATUS_CONDITION_FALSE,
+								Reason: "Creating",
+							},
+							// A condition returned by the function with all optional values
+							// given.
+							{
+								Type:    "DeploymentReady",
+								Status:  v1beta1.Status_STATUS_CONDITION_TRUE,
+								Reason:  "Available",
+								Message: ptr.To("The deployment is ready."),
+								Target:  v1beta1.Target_TARGET_COMPOSITE_AND_CLAIM.Enum(),
+							},
 						},
 					}
 					return rsp, nil
@@ -718,6 +828,35 @@ func TestFunctionCompose(t *testing.T) {
 							},
 							Target: CompositionTargetComposite,
 						},
+						{
+							Event: event.Event{
+								Type:    "Normal",
+								Reason:  "SomeReason",
+								Message: "Pipeline step \"run-cool-function\": A result with all values explicitly set.",
+							},
+							Target: CompositionTargetCompositeAndClaim,
+						},
+					},
+					Conditions: []TargetedCondition{
+						// The condition with minimum values.
+						{
+							Condition: xpv1.Condition{
+								Type:   "DatabaseReady",
+								Status: "False",
+								Reason: "Creating",
+							},
+							Target: CompositionTargetComposite,
+						},
+						// The condition that provides all possible values.
+						{
+							Condition: xpv1.Condition{
+								Type:    "DeploymentReady",
+								Status:  "True",
+								Reason:  "Available",
+								Message: "The deployment is ready.",
+							},
+							Target: CompositionTargetCompositeAndClaim,
+						},
 					},
 				},
 				err: nil,
@@ -794,6 +933,13 @@ func TestFunctionCompose(t *testing.T) {
 								{
 									Severity: v1beta1.Severity_SEVERITY_UNSPECIFIED,
 									Message:  "A result of unspecified severity",
+								},
+								{
+									// If the severity is unknown, the target should be force set
+									// to target only the XR.
+									Severity: v1beta1.Severity_SEVERITY_UNSPECIFIED,
+									Message:  "A result of unspecified severity targeting the claim should be forced to only target the XR.",
+									Target:   v1beta1.Target_TARGET_COMPOSITE_AND_CLAIM.Enum(),
 								},
 							},
 							Requirements: requirements,
@@ -925,6 +1071,16 @@ func TestFunctionCompose(t *testing.T) {
 								Type:    "Warning",
 								Reason:  "ComposeResources",
 								Message: "Pipeline step \"run-cool-function\" returned a result of unknown severity (assuming warning): A result of unspecified severity",
+							},
+							Target: CompositionTargetComposite,
+						},
+						// If the severity is unknown, the target should be force set
+						// to target only the XR.
+						{
+							Event: event.Event{
+								Type:    "Warning",
+								Reason:  "ComposeResources",
+								Message: "Pipeline step \"run-cool-function\" returned a result of unknown severity (assuming warning): A result of unspecified severity targeting the claim should be forced to only target the XR.",
 							},
 							Target: CompositionTargetComposite,
 						},
